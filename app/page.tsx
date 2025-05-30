@@ -13,9 +13,19 @@ export default function WordUtilityAnalyzer() {
   const [word, setWord] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
   const [consoleMessages, setConsoleMessages] = useState<string[]>([])
-  const [utilityScore, setUtilityScore] = useState<number | null>(null)
   const [showScore, setShowScore] = useState(false)
   const consoleRef = useRef<HTMLDivElement>(null)
+
+  const [userWordScores, setUserWordScores] = useState<{
+    word: string;
+    scores: { mi: number; chi2: number; frequency: number };
+  } | null>(null);
+
+  const [topWords, setTopWords] = useState<{
+    mi: { word: string; score: number }[];
+    chi2: { word: string; score: number }[];
+    frequency: { word: string; score: number }[];
+  }>({ mi: [], chi2: [], frequency: [] });
 
   const addConsoleMessage = (message: string) => {
     setConsoleMessages((prev) => [...prev, message])
@@ -32,63 +42,68 @@ export default function WordUtilityAnalyzer() {
   }, [consoleMessages])
 
   const handleAnalyze = async () => {
-    if (!selectedClass || !word.trim()) return
+  if (!selectedClass || !word.trim()) return;
 
-    setIsProcessing(true)
-    setShowScore(false)
-    setUtilityScore(null)
-    setConsoleMessages([])
+  setIsProcessing(true);
+  setShowScore(false);
+  setConsoleMessages([]);
+  setUserWordScores(null);
+  setTopWords({ mi: [], chi2: [], frequency: [] });
 
-    try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          category: selectedClass,
-          word: word.trim(),
-        }),
-      })
+  try {
+    const response = await fetch("/api/analyze", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        category: selectedClass,
+        word: word.trim(),
+      }),
+    });
 
-      if (!response.body) {
-        throw new Error("No response body")
-      }
+    if (!response.body) {
+      throw new Error("No response body");
+    }
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
 
-        const chunk = decoder.decode(value)
-        const lines = chunk.split("\n").filter((line) => line.trim())
+      let lines = buffer.split("\n");
+      buffer = lines.pop() || ""; // Save incomplete line for next chunk
 
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.substring(6))
-
-              if (data.type === "console") {
-                addConsoleMessage(data.message)
-              } else if (data.type === "result") {
-                setUtilityScore(data.score)
-                setIsProcessing(false)
-                setTimeout(() => setShowScore(true), 100)
-              }
-            } catch (e) {
-              console.error("Failed to parse SSE data:", e)
+      for (const line of lines) {
+        if (line.startsWith("data:")) {
+          try {
+            const data = JSON.parse(line.replace("data: ", ""));
+            if (data.type === "console") {
+              addConsoleMessage(data.message);
+            } else if (data.type === "result") {
+              setUserWordScores(data.input_word);
+              setTopWords(data.top_words);
+              setIsProcessing(false);
+              console.log("Analysis complete:", data);
+              setShowScore(true);
             }
+          } catch (e) {
+            // Ignore parse errors for non-JSON lines
           }
         }
       }
-    } catch (error) {
-      console.error("Analysis failed:", error)
-      addConsoleMessage(`Error: ${error instanceof Error ? error.message : "Unknown error"}`)
-      setIsProcessing(false)
     }
+  } catch (error) {
+    console.error("Analysis failed:", error);
+    addConsoleMessage(`Error: ${error instanceof Error ? error.message : "Unknown error"}`);
+    setIsProcessing(false);
   }
+};
+
 
   const getScoreColor = (score: number) => {
     if (score === 0) return "text-gray-400"
@@ -111,7 +126,7 @@ export default function WordUtilityAnalyzer() {
       <div className="max-w-6xl w-full space-y-6">
         {/* Header */}
         <div className="text-center space-y-2">
-          <h1 className="text-4xl font-bold text-white">Word Utility Analyzer</h1>
+          <h1 className="text-4xl font-bold text-white">Utility Measure Analyzer</h1>
           <p className="text-slate-300">Measure word frequency across different text categories</p>
         </div>
 
@@ -132,14 +147,14 @@ export default function WordUtilityAnalyzer() {
                     <SelectValue placeholder="Select category" />
                   </SelectTrigger>
                   <SelectContent className="bg-slate-700 border-slate-600">
-                    <SelectItem value="space" className="text-white">
+                    <SelectItem value="sci_space" className="text-white">
                       🚀 Space
                     </SelectItem>
-                    <SelectItem value="sports" className="text-white">
-                      ⚽ Sports
+                    <SelectItem value="sci_med" className="text-white">
+                      💊 Medicine
                     </SelectItem>
-                    <SelectItem value="animals" className="text-white">
-                      🦁 Animals
+                    <SelectItem value="rec_sport_baseball" className="text-white">
+                      ⚾ Baseball
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -184,15 +199,17 @@ export default function WordUtilityAnalyzer() {
                 {consoleMessages.length === 0 ? (
                   <div className="text-slate-500">Console output will appear here...</div>
                 ) : (
-                  consoleMessages.map((message, index) => (
-                    <div
-                      key={index}
-                      className="text-green-400 mb-1 animate-in fade-in duration-300"
-                      style={{ animationDelay: `${index * 50}ms` }}
-                    >
-                      {message}
-                    </div>
-                  ))
+                  <>
+                    {consoleMessages.map((message, index) => (
+                      <div
+                        key={index}
+                        className="text-green-400 mb-1 animate-in fade-in duration-300"
+                        style={{ animationDelay: `${index * 50}ms` }}
+                      >
+                        {message}
+                      </div>
+                    ))}
+                  </>
                 )}
                 {isProcessing && (
                   <div className="text-green-400 animate-pulse">
@@ -203,37 +220,72 @@ export default function WordUtilityAnalyzer() {
             </CardContent>
           </Card>
 
-          {/* Score Display */}
+          {/* User Word Scores and Top Words Display */}
           <Card className="bg-slate-900/80 border-slate-700">
             <CardHeader>
-              <CardTitle className="text-white">Utility Score</CardTitle>
+              <CardTitle className="text-white">Analysis Results</CardTitle>
             </CardHeader>
-            <CardContent className="flex items-center justify-center h-80">
-              {utilityScore === null ? (
-                <div className="text-center text-slate-500">
+            <CardContent className="flex flex-col items-center justify-center h-80 w-full">
+              {!showScore || !userWordScores ? (
+                <div className="text-center text-slate-500 w-full">
                   <TrendingUp className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                  <p>Run analysis to see utility score</p>
+                  <p>ShowScore: {showScore ? "yes" : "no"}</p>
                 </div>
               ) : (
-                <div
-                  className={`text-center transition-all duration-1000 ${showScore ? "scale-100 opacity-100" : "scale-50 opacity-0"}`}
-                >
-                  <div
-                    className={`text-6xl font-bold mb-4 ${getScoreColor(utilityScore)} transition-all duration-1000`}
-                  >
-                    {showScore ? utilityScore.toLocaleString() : "0"}
+                <div className="w-full flex flex-col gap-6 items-center">
+                  {/* User Word Scores */}
+                  <div className="mb-4 w-full">
+                    <h3 className="text-lg font-semibold text-white text-center mb-2">Your Word: <span className="text-purple-400">{userWordScores.word}</span></h3>
+                    <div className="flex flex-wrap justify-center gap-4">
+                      <div className="bg-slate-800 rounded-lg px-4 py-2 text-center">
+                        <div className="text-xs text-slate-400">Mutual Information</div>
+                        <div className="text-2xl font-bold text-purple-400">{userWordScores.scores.mi?.toFixed(5) ?? 0}</div>
+                      </div>
+                      <div className="bg-slate-800 rounded-lg px-4 py-2 text-center">
+                        <div className="text-xs text-slate-400">Chi²</div>
+                        <div className="text-2xl font-bold text-purple-400">{userWordScores.scores.chi2?.toFixed(2) ?? 0}</div>
+                      </div>
+                      <div className="bg-slate-800 rounded-lg px-4 py-2 text-center">
+                        <div className="text-xs text-slate-400">Frequency</div>
+                        <div className="text-2xl font-bold text-purple-400">{userWordScores.scores.frequency ?? 0}</div>
+                      </div>
+                    </div>
                   </div>
-                  <Badge
-                    variant="outline"
-                    className={`text-lg px-4 py-2 ${getScoreColor(utilityScore)} border-current`}
-                  >
-                    {getScoreLabel(utilityScore)}
-                  </Badge>
-                  <div className="mt-4 text-slate-400 text-sm">
-                    Word: <span className="text-white font-medium">"{word}"</span>
-                  </div>
-                  <div className="text-slate-400 text-sm">
-                    Category: <span className="text-white font-medium capitalize">{selectedClass}</span>
+                  {/* Top Words Leaderboards */}
+                  <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-slate-800 rounded-lg p-3">
+                      <div className="text-xs text-slate-400 mb-2 text-center">Top MI Words</div>
+                      <ol className="list-decimal list-inside space-y-1">
+                        {topWords.mi.map((item) => (
+                          <li key={item.word} className="flex justify-between text-slate-200">
+                            <span>{item.word}</span>
+                            <span className="text-purple-400">{item.score.toFixed(5)}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-3">
+                      <div className="text-xs text-slate-400 mb-2 text-center">Top Chi² Words</div>
+                      <ol className="list-decimal list-inside space-y-1">
+                        {topWords.chi2.map((item) => (
+                          <li key={item.word} className="flex justify-between text-slate-200">
+                            <span>{item.word}</span>
+                            <span className="text-purple-400">{item.score.toFixed(2)}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                    <div className="bg-slate-800 rounded-lg p-3">
+                      <div className="text-xs text-slate-400 mb-2 text-center">Top Frequency Words</div>
+                      <ol className="list-decimal list-inside space-y-1">
+                        {topWords.frequency.map((item) => (
+                          <li key={item.word} className="flex justify-between text-slate-200">
+                            <span>{item.word}</span>
+                            <span className="text-purple-400">{item.score}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
                   </div>
                 </div>
               )}

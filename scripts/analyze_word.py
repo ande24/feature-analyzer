@@ -1,68 +1,116 @@
 import sys
 import json
-from sklearn.datasets import fetch_20newsgroups
+import os
 from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.feature_selection import mutual_info_classif, chi2
 import numpy as np
 
-def analyze_word(category, word):
-    print("starting script...")
-    
-    # Map frontend categories to 20newsgroups categories
-    category_mapping = {
-        'space': ['sci.space'],
-        'sports': ['rec.sport.baseball', 'rec.sport.hockey'],
-        'animals': ['sci.med']  # Using medical as proxy for animals/biology
-    }
-    
-    if category not in category_mapping:
-        print(f"Error: Unknown category '{category}'")
-        return 0
-    
-    categories = category_mapping[category]
-    
-    # Load the specified category from the 20 newsgroups dataset
-    print(f"Fetching '{category}' data...")
-    data = fetch_20newsgroups(subset='train', categories=categories, remove=('headers', 'footers', 'quotes'))
-    X_raw = data.data
-    print(f"Fetched {len(X_raw)} documents.")
+def analyze_top_words(category, user_word, top_k=5):
+    print("Starting script...")
+    print(f"Category: {category}, Word: {user_word}")
 
-    # Convert to bag-of-words representation
-    print("Vectorizing text data...")
+    # Paths
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_root = os.path.normpath(os.path.join(base_dir, '..', 'public', 'documents'))
+    category_dir = os.path.join(data_root, category)
+
+    if not os.path.isdir(category_dir):
+        raise FileNotFoundError(f"Category directory '{category_dir}' does not exist.")
+
+    # Load in-category documents
+    X_pos = []
+    for filename in os.listdir(category_dir):
+        file_path = os.path.join(category_dir, filename)
+        if os.path.isfile(file_path):
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                X_pos.append(f.read())
+    if not X_pos:
+        raise ValueError(f"No documents found in '{category_dir}'.")
+
+    # Load out-of-category documents
+    X_neg = []
+    for other_category in os.listdir(data_root):
+        other_dir = os.path.join(data_root, other_category)
+        if other_category != category and os.path.isdir(other_dir):
+            for filename in os.listdir(other_dir):
+                file_path = os.path.join(other_dir, filename)
+                if os.path.isfile(file_path):
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        X_neg.append(f.read())
+
+    print(f"Loaded {len(X_pos)} positive and {len(X_neg)} negative documents.")
+
+    # Combine data and labels
+    X_all = X_pos + X_neg
+    y = np.array([1] * len(X_pos) + [0] * len(X_neg))  # 1 = in-category, 0 = out
+
+    # Vectorize
+    print("Vectorizing...")
     vectorizer = CountVectorizer(stop_words='english')
-    X = vectorizer.fit_transform(X_raw)
+    X = vectorizer.fit_transform(X_all)
     feature_names = vectorizer.get_feature_names_out()
-    print(f"Vectorized to {X.shape[0]} documents and {X.shape[1]} features.")
 
-    # Sum up the frequencies for each word
-    print("Calculating word frequencies...")
-    word_frequencies = np.asarray(X.sum(axis=0)).flatten()
-    print("Word frequencies calculated.")
+    print("Computing metrics...")
+    mi_scores = mutual_info_classif(X, y, discrete_features=True)
+    chi2_scores, _ = chi2(X, y)
 
-    # Create a dictionary mapping words to their frequencies
-    print("Creating word-frequency dictionary...")
-    word_freq_dict = dict(zip(feature_names, word_frequencies))
-    print(f"Dictionary created with {len(word_freq_dict)} words.")
+    # In-category frequencies
+    freq_vectorizer = CountVectorizer(stop_words='english', vocabulary=feature_names)
+    X_pos_matrix = freq_vectorizer.fit_transform(X_pos)
+    frequencies = np.asarray(X_pos_matrix.sum(axis=0)).flatten()
 
-    # Get utility score for the word
-    word_lower = word.lower()
-    score = word_freq_dict.get(word_lower, 0)
-    print(f"Utility score (frequency) of '{word}' in the '{category}' class: {score}")
-    
-    return score
+    # Combine all word data
+    word_data = []
+    word_index_map = {word: i for i, word in enumerate(feature_names)}
+
+    for word, idx in word_index_map.items():
+        word_data.append({
+            "word": word,
+            "mutual_information": float(mi_scores[idx]),
+            "chi_squared": float(chi2_scores[idx]),
+            "frequency": int(frequencies[idx])
+        })
+
+    # Top 5 by MI
+    top_words = sorted(word_data, key=lambda x: x["mutual_information"], reverse=True)[:top_k]
+
+    # Add the user word
+    user_word = user_word.lower()
+    if user_word in word_index_map:
+        idx = word_index_map[user_word]
+        user_word_data = {
+            "word": user_word,
+            "mutual_information": float(mi_scores[idx]),
+            "chi_squared": float(chi2_scores[idx]),
+            "frequency": int(frequencies[idx])
+        }
+    else:
+        user_word_data = {
+            "word": user_word,
+            "mutual_information": 0.0,
+            "chi_squared": 0.0,
+            "frequency": 0
+        }
+
+    return {"category": category, "top_words": top_words, "input_word": user_word_data}
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         print("Usage: python analyze_word.py <category> <word>")
         sys.exit(1)
-    
+
     category = sys.argv[1]
-    word = sys.argv[2]
-    
+    user_word = sys.argv[2]
+
     try:
-        score = analyze_word(category, word)
-        # Output final result as JSON for easy parsing
-        result = {"score": int(score), "word": word, "category": category}
+        result = analyze_top_words(category, user_word)
         print("RESULT:" + json.dumps(result))
     except Exception as e:
         print(f"Error: {str(e)}")
-        print("RESULT:" + json.dumps({"score": 0, "word": word, "category": category, "error": str(e)}))
+        print("RESULT:" + json.dumps({
+            "category": category,
+            "top_words": [],
+            "input_word": {"word": user_word, "mutual_information": 0.0, "chi_squared": 0.0, "frequency": 0},
+            "error": str(e)
+        }))
