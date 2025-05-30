@@ -71,8 +71,10 @@ def analyze_top_words(category, user_word, top_k=5):
             "frequency": int(frequencies[idx])
         })
 
-    # Top 5 by MI
-    top_words = sorted(word_data, key=lambda x: x["mutual_information"], reverse=True)[:top_k]
+    # Top 5 by each measure
+    top_mi = sorted(word_data, key=lambda x: x["mutual_information"], reverse=True)[:top_k]
+    top_chi2 = sorted(word_data, key=lambda x: x["chi_squared"], reverse=True)[:top_k]
+    top_freq = sorted(word_data, key=lambda x: x["frequency"], reverse=True)[:top_k]
 
     # Add the user word
     user_word = user_word.lower()
@@ -92,7 +94,15 @@ def analyze_top_words(category, user_word, top_k=5):
             "frequency": 0
         }
 
-    return {"category": category, "top_words": top_words, "input_word": user_word_data}
+    return {
+        "category": category,
+        "top_words": {
+            "mi": top_mi,
+            "chi2": top_chi2,
+            "frequency": top_freq
+        },
+        "input_word": user_word_data
+    }
 
 
 if __name__ == "__main__":

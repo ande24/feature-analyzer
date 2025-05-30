@@ -55,14 +55,14 @@ export async function POST(request: NextRequest) {
                 typeof finalResult.input_word.mutual_information === "number" &&
                 typeof finalResult.input_word.chi_squared === "number" &&
                 typeof finalResult.input_word.frequency === "number" &&
-                Array.isArray(finalResult.top_words)
+                finalResult.top_words &&
+                typeof finalResult.top_words === "object" &&
+                Array.isArray(finalResult.top_words.mi) &&
+                Array.isArray(finalResult.top_words.chi2) &&
+                Array.isArray(finalResult.top_words.frequency)
               ) {
-                // Map top_words to leaderboard structure
-                const top_words = {
-                  mi: (finalResult.top_words as any[]).map((w: any) => ({ word: w.word, score: w.mutual_information })),
-                  chi2: (finalResult.top_words as any[]).map((w: any) => ({ word: w.word, score: w.chi_squared })),
-                  frequency: (finalResult.top_words as any[]).map((w: any) => ({ word: w.word, score: w.frequency })),
-                };
+                // Use top_words as-is (already split by measure)
+                const top_words = finalResult.top_words;
                 const input_word = {
                   word: finalResult.input_word.word,
                   scores: {
@@ -99,7 +99,11 @@ export async function POST(request: NextRequest) {
                     scores: { mi, chi2, frequency },
                     ...(error ? { error } : {}),
                   },
-                  top_words,
+                  top_words: {
+                    mi: top_words.mi || [],
+                    chi2: top_words.chi2 || [],
+                    frequency: top_words.frequency || [],
+                  },
                 };
                 console.log("[API/analyze] Sending result (legacy):", resultData);
                 controller.enqueue(

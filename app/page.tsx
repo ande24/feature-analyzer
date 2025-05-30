@@ -22,9 +22,9 @@ export default function WordUtilityAnalyzer() {
   } | null>(null);
 
   const [topWords, setTopWords] = useState<{
-    mi: { word: string; score: number }[];
-    chi2: { word: string; score: number }[];
-    frequency: { word: string; score: number }[];
+    mi: { word: string; mutual_information: number }[];
+    chi2: { word: string; chi_squared: number }[];
+    frequency: { word: string; frequency: number }[];
   }>({ mi: [], chi2: [], frequency: [] });
 
   const addConsoleMessage = (message: string) => {
@@ -82,13 +82,23 @@ export default function WordUtilityAnalyzer() {
         if (line.startsWith("data:")) {
           try {
             const data = JSON.parse(line.replace("data: ", ""));
+            console.log("[Analyzer] Received data:", data);
             if (data.type === "console") {
               addConsoleMessage(data.message);
             } else if (data.type === "result") {
-              setUserWordScores(data.input_word);
-              setTopWords(data.top_words);
+              // Defensive: handle both new and legacy structures
+              if (data.input_word && data.top_words) {
+                setUserWordScores(data.input_word);
+                setTopWords(data.top_words);
+              } else if (data.word && typeof data.score === "number") {
+                setUserWordScores({
+                  word: data.word,
+                  scores: { mi: data.score, chi2: 0, frequency: 0 },
+                  ...(data.error ? { error: data.error } : {})
+                });
+                setTopWords({ mi: [], chi2: [], frequency: [] });
+              }
               setIsProcessing(false);
-              console.log("Analysis complete:", data);
               setShowScore(true);
             }
           } catch (e) {
@@ -127,7 +137,7 @@ export default function WordUtilityAnalyzer() {
         {/* Header */}
         <div className="text-center space-y-2">
           <h1 className="text-4xl font-bold text-white">Utility Measure Analyzer</h1>
-          <p className="text-slate-300">Measure word frequency across different text categories</p>
+          <p className="text-slate-300">Measure feature utility across different text categories</p>
         </div>
 
         {/* Controls */}
@@ -150,11 +160,11 @@ export default function WordUtilityAnalyzer() {
                     <SelectItem value="sci_space" className="text-white">
                       🚀 Space
                     </SelectItem>
-                    <SelectItem value="sci_med" className="text-white">
-                      💊 Medicine
+                    <SelectItem value="rec_autos" className="text-white">
+                      🚗 Cars
                     </SelectItem>
-                    <SelectItem value="rec_sport_baseball" className="text-white">
-                      ⚾ Baseball
+                    <SelectItem value="rec_sport_hockey" className="text-white">
+                      🏒 Hockey
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -179,7 +189,7 @@ export default function WordUtilityAnalyzer() {
                 className="bg-purple-600 hover:bg-purple-700 text-white px-8"
               >
                 <Play className="w-4 h-4 mr-2" />
-                {isProcessing ? "Processing..." : "Analyze"}
+                {isProcessing ? "Processing, this might take a minute..." : "Analyze"}
               </Button>
             </div>
           </CardContent>
@@ -229,28 +239,26 @@ export default function WordUtilityAnalyzer() {
               {!showScore || !userWordScores ? (
                 <div className="text-center text-slate-500 w-full">
                   <TrendingUp className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                  <p>ShowScore: {showScore ? "yes" : "no"}</p>
                 </div>
               ) : (
-                <div className="w-full flex flex-col gap-6 items-center">
+                <div className="w-full flex flex-col gap-4 items-center">
                   {/* User Word Scores */}
-                  <div className="mb-4 w-full">
-                    <h3 className="text-lg font-semibold text-white text-center mb-2">Your Word: <span className="text-purple-400">{userWordScores.word}</span></h3>
-                    <div className="flex flex-wrap justify-center gap-4">
-                      <div className="bg-slate-800 rounded-lg px-4 py-2 text-center">
-                        <div className="text-xs text-slate-400">Mutual Information</div>
-                        <div className="text-2xl font-bold text-purple-400">{userWordScores.scores.mi?.toFixed(5) ?? 0}</div>
-                      </div>
-                      <div className="bg-slate-800 rounded-lg px-4 py-2 text-center">
-                        <div className="text-xs text-slate-400">Chi²</div>
-                        <div className="text-2xl font-bold text-purple-400">{userWordScores.scores.chi2?.toFixed(2) ?? 0}</div>
-                      </div>
-                      <div className="bg-slate-800 rounded-lg px-4 py-2 text-center">
-                        <div className="text-xs text-slate-400">Frequency</div>
-                        <div className="text-2xl font-bold text-purple-400">{userWordScores.scores.frequency ?? 0}</div>
-                      </div>
+                  <h3 className="text-lg font-semibold text-white text-center mb-2">Your Word: <span className="text-purple-400">{userWordScores.word}</span></h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
+                    <div className="bg-slate-800 col-span-1 rounded-lg px-4 py-2 text-center">
+                      <div className="text-xs text-slate-400">Mutual Information</div>
+                      <div className="text-2xl font-bold text-purple-400">{userWordScores.scores.mi?.toFixed(5) ?? 0}</div>
+                    </div>
+                    <div className="bg-slate-800  col-span-1  rounded-lg px-4 py-2 text-center">
+                      <div className="text-xs text-slate-400">Chi²</div>
+                      <div className="text-2xl font-bold text-purple-400">{userWordScores.scores.chi2?.toFixed(2) ?? 0}</div>
+                    </div>
+                    <div className="bg-slate-800  col-span-1  rounded-lg px-4 py-2 text-center">
+                      <div className="text-xs text-slate-400">Frequency</div>
+                      <div className="text-2xl font-bold text-purple-400">{userWordScores.scores.frequency ?? 0}</div>
                     </div>
                   </div>
+                    
                   {/* Top Words Leaderboards */}
                   <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="bg-slate-800 rounded-lg p-3">
@@ -259,7 +267,7 @@ export default function WordUtilityAnalyzer() {
                         {topWords.mi.map((item) => (
                           <li key={item.word} className="flex justify-between text-slate-200">
                             <span>{item.word}</span>
-                            <span className="text-purple-400">{item.score.toFixed(5)}</span>
+                            <span className="text-purple-400">{typeof item.mutual_information === "number" ? item.mutual_information.toFixed(5) : "0"}</span>
                           </li>
                         ))}
                       </ol>
@@ -270,7 +278,7 @@ export default function WordUtilityAnalyzer() {
                         {topWords.chi2.map((item) => (
                           <li key={item.word} className="flex justify-between text-slate-200">
                             <span>{item.word}</span>
-                            <span className="text-purple-400">{item.score.toFixed(2)}</span>
+                            <span className="text-purple-400">{typeof item.chi_squared === "number" ? item.chi_squared.toFixed(2) : "0"}</span>
                           </li>
                         ))}
                       </ol>
@@ -281,7 +289,7 @@ export default function WordUtilityAnalyzer() {
                         {topWords.frequency.map((item) => (
                           <li key={item.word} className="flex justify-between text-slate-200">
                             <span>{item.word}</span>
-                            <span className="text-purple-400">{item.score}</span>
+                            <span className="text-purple-400">{typeof item.frequency === "number" ? item.frequency : "0"}</span>
                           </li>
                         ))}
                       </ol>
